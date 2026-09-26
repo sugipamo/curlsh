@@ -26,7 +26,9 @@ non_interactive=0 dry_run=0
 while (($#)); do
   case "$1" in
     --platform|--components|--repo|--ref)
-      (($# >= 2)) && [[ -n $2 && $2 != --* ]] || { echo "Missing value for $1" >&2; exit 2; }
+      if (($# < 2)) || [[ -z ${2-} || ${2-} == --* ]]; then
+        echo "Missing value for $1" >&2; exit 2
+      fi
       case "$1" in
         --platform) platform=$2 ;;
         --components) components=$2 ;;

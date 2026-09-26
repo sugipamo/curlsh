@@ -91,7 +91,7 @@ mock_preflight() {
 
 (
   # Shared packages are checked once; update checks never invoke an installer.
-  # shellcheck disable=SC2329
+  # shellcheck disable=SC2317,SC2329
   apt-get() { echo 'Unexpected package mutation' >&2; exit 99; }
   package_version() { printf '1.0\n'; }
   apt_candidate() { printf '2.0\n'; }
@@ -152,7 +152,7 @@ mock_preflight() {
   # Authentication is suggested, never executed and never inferred from root's credentials.
   probe_component() { observed_state[$1]=installed; observed_detail[$1]='version 1.0'; }
   read_command_version() { printf 'version 1.0\n'; }
-  # shellcheck disable=SC2329
+  # shellcheck disable=SC2317,SC2329
   gh() { echo 'Unexpected authentication access' >&2; exit 99; }
   output=$(verify_selected github_cli)
   [[ $output == *'OK '* && $output == *'gh auth status'* && $output == *'gh auth login'* ]]
