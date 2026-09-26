@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# Only host facts are stubbed; use the real preflight and verification logic.
+# shellcheck source=lib/diagnostics.sh
+source "$CURLSH_TEST_REPO/lib/diagnostics.sh"
+read_target_os() { target_os=debian target_release=13 target_codename=trixie; }
+available_kib() { printf '%s\n' "${CURLSH_TEST_SPACE:-99999999}"; }

@@ -24,6 +24,9 @@ jobs:
           ./tests/test-bootstrap.sh
           ./tests/test-diagnostics.sh
           ./tests/test-fetch.sh
+          ./tests/test-boundaries.sh
+          sudo ./tests/test-boundaries.sh
+          /tmp/machine-bootstrap-lint/bin/python ./tests/test-specs.py
       - name: Check playbook syntax
         run: /tmp/machine-bootstrap-lint/bin/ansible-playbook -i localhost, -c local playbook.yml -e bootstrap_platform=vm --syntax-check
       - name: Lint Ansible
@@ -41,6 +44,8 @@ jobs:
           DEBIAN_VERSION: ${{ matrix.debian }}
         run: |
           docker run --rm -v "$PWD:/workspace:ro" "debian:$DEBIAN_VERSION" bash -ceu '
+            cd /workspace
+            ./bootstrap.sh --dry-run --platform lxc --components base,codex
             apt-get update
             DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ansible-core python3-apt
             cd /workspace

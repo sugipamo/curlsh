@@ -13,11 +13,14 @@ Components: base,github_cli,tailscale,codex,docker,nodejs,devtools,qemu_guest_ag
 --check          Check prerequisites and selected HTTPS endpoints without installing.
 --check-updates  Compare installed versions with cached APT candidates / Codex releases.
                  Does NOT refresh APT indexes or apply updates.
---dry-run        Validate arguments and show the selection without installing.
+--dry-run        Explain changes, local package state and uncertainties without installing.
+                 Does not run Ansible, refresh APT or query vendor endpoints.
 
 Read-only modes default to all components supported on the selected platform.
 Non-interactive installation requires --components; interactive installation needs a TTY.
 A standalone script fetches the repository archive at --ref (default: v0.2.0).
+This source download also happens in dry-run; temporary files are removed on exit.
+Interactive mode uses existing gum or a Bash text menu; it never installs gum.
 EOF
 }
 
@@ -80,6 +83,8 @@ if [[ -n ${BASH_SOURCE[0]-} ]]; then
 fi
 cleanup() { [[ -z $temp_dir ]] || rm -rf -- "$temp_dir"; }
 trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 if [[ -n $script_dir && -f $script_dir/playbook.yml && -d $script_dir/lib ]]; then
   project_dir=$script_dir
   checkout_entrypoint=$script_dir/bootstrap.sh
@@ -99,6 +104,10 @@ source "$project_dir/lib/components.sh"
 source "$project_dir/lib/diagnostics.sh"
 # shellcheck source=lib/updates.sh
 source "$project_dir/lib/updates.sh"
+# shellcheck source=lib/plan.sh
+source "$project_dir/lib/plan.sh"
+# shellcheck source=lib/menu.sh
+source "$project_dir/lib/menu.sh"
 codex_target=$(sed -n "s/^codex_version: '\([^']*\)'$/\1/p" "$project_dir/vars/versions.yml")
 [[ $codex_target =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo 'Invalid Codex version metadata' >&2; exit 1; }
 
@@ -106,31 +115,7 @@ if [[ $mode == install && -z $components ]]; then
   [[ -t 0 && -t 1 ]] || { echo 'Interactive mode requires a TTY' >&2; exit 2; }
   [[ $EUID -eq 0 ]] || { echo 'Run installation as root (sudo ./bootstrap.sh)' >&2; exit 1; }
   require_target_os || { echo 'Debian 12 or 13 is required' >&2; exit 1; }
-  if ! command -v gum >/dev/null 2>&1; then
-    echo 'Installing menu prerequisites: ca-certificates, curl, gnupg and gum.'
-    apt-get update
-    DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates curl gnupg
-    install -d -m 0755 /etc/apt/keyrings
-    curl -fsSL https://repo.charm.sh/apt/gpg.key |
-      gpg --batch --yes --dearmor -o /etc/apt/keyrings/charm.gpg
-    chmod 0644 /etc/apt/keyrings/charm.gpg
-    printf '%s\n' 'deb [signed-by=/etc/apt/keyrings/charm.gpg] https://repo.charm.sh/apt/ * *' \
-      >/etc/apt/sources.list.d/charm.list
-    apt-get update
-    DEBIAN_FRONTEND=noninteractive apt-get install -y gum
-  fi
-  choices=()
-  for item in "${component_ids[@]}"; do
-    component_supported "$item" || continue
-    probe_component "$item"
-    choices+=("$item | ${component_labels[$item]} | ${observed_state[$item]}: ${observed_detail[$item]:0:80}")
-  done
-  printf 'Detected platform: %s\n' "$platform"
-  selection=$(printf '%s\n' "${choices[@]}" |
-    gum choose --no-limit --header 'Install components (Space: select, Enter: continue)')
-  [[ -n $selection ]] || { echo 'No components selected' >&2; exit 1; }
-  requested=()
-  while IFS= read -r item; do requested+=("${item%% | *}"); done <<<"$selection"
+  choose_components || { echo 'Cancelled before installation'; exit 1; }
 else
   if [[ -n $components ]]; then
     IFS=, read -r -a requested <<<"$components"
@@ -154,7 +139,11 @@ done
 (("${#selected[@]}")) || { echo 'No components selected' >&2; exit 2; }
 components=$(IFS=,; echo "${selected[*]}")
 printf 'Platform: %s\nComponents: %s\n' "$platform" "$components"
-((dry_run == 0)) || exit 0
+if ((dry_run)); then
+  show_change_plan "${selected[@]}"
+  printf '\nDry-run complete. No installation or prerequisite checks were performed.\n'
+  exit 0
+fi
 
 case "$mode" in
   status) show_status "${selected[@]}"; print_next_steps "${selected[@]}"; exit 0 ;;
@@ -163,11 +152,15 @@ case "$mode" in
 esac
 
 [[ $EUID -eq 0 ]] || { echo 'Run installation as root (sudo ./bootstrap.sh)' >&2; exit 1; }
+show_change_plan "${selected[@]}"
 preflight "${selected[@]}" || exit 1
 show_status "${selected[@]}"
 if ((!non_interactive)); then
-  gum confirm 'Apply this configuration?' || { echo 'Cancelled'; exit 1; }
+  confirm_installation || { echo 'Cancelled before installation'; exit 1; }
+else
+  printf '\nInstallation authorized by --non-interactive with explicit --components.\n'
 fi
+printf 'Beginning system changes.\n'
 tooling=()
 command -v ansible-playbook >/dev/null || tooling+=(ansible-core)
 package_version python3-apt >/dev/null || tooling+=(python3-apt)
