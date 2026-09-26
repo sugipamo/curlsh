@@ -4,17 +4,6 @@
     that: bootstrap_platform in ['vm', 'baremetal']
     fail_msg: Docker is not supported by this bootstrap on LXC
 
-- name: Ensure Docker repository prerequisites
-  ansible.builtin.apt:
-    name: [ca-certificates, curl]
-    state: present
-
-- name: Create Docker keyring directory
-  ansible.builtin.file:
-    path: /etc/apt/keyrings
-    state: directory
-    mode: '0755'
-
 - name: Download Docker repository signing key
   ansible.builtin.get_url:
     url: https://download.docker.com/linux/debian/gpg

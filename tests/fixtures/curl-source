@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+destination=
+found_url=0
+while (($#)); do
+  case "$1" in
+    -o) destination=$2; shift 2 ;;
+    https://github.com/sugipamo/curlsh/archive/refs/tags/v0.2.0.tar.gz) found_url=1; shift ;;
+    *) shift ;;
+  esac
+done
+[[ -n $destination && $found_url -eq 1 ]]
+cp "$CURLSH_TEST_ARCHIVE" "$destination"
+printf 'fetch\n' >>"$CURLSH_TEST_FETCH_MARKER"

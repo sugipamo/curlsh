@@ -1,15 +1,4 @@
 ---
-- name: Ensure prerequisites for GitHub CLI
-  ansible.builtin.apt:
-    name: [ca-certificates, curl]
-    state: present
-
-- name: Create APT keyring directory
-  ansible.builtin.file:
-    path: /etc/apt/keyrings
-    state: directory
-    mode: '0755'
-
 - name: Download GitHub CLI signing keyring
   ansible.builtin.get_url:
     url: https://cli.github.com/packages/githubcli-archive-keyring.gpg

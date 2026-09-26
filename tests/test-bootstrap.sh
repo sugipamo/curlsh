@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 
 repo_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
-shellcheck "$repo_dir/bootstrap.sh" "$repo_dir/tests/test-bootstrap.sh"
+shellcheck -x -P "$repo_dir" "$repo_dir/bootstrap.sh" "$repo_dir"/tests/*.sh "$repo_dir"/tests/fixtures/*
 
 output=$(
   "$repo_dir/bootstrap.sh" --dry-run --non-interactive --platform vm \
@@ -38,3 +38,12 @@ for invalid_args in \
 done
 
 echo 'bootstrap argument checks passed'
+
+output=$("$repo_dir/bootstrap.sh" --status --platform lxc --components base)
+[[ $output == *'COMPONENT'* && $output == *'--check-updates'* ]]
+for conflicting in --status --check --check-updates; do
+  if "$repo_dir/bootstrap.sh" --platform vm --status "$conflicting" >/dev/null 2>&1; then
+    echo 'Multiple diagnostic modes should fail' >&2
+    exit 1
+  fi
+done
