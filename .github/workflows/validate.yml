@@ -12,7 +12,7 @@ jobs:
   lint:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install validation tools
         run: |
           sudo apt-get update
@@ -29,7 +29,7 @@ jobs:
   debian-smoke:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Run base and Codex roles on Debian 13
         run: |
           docker run --rm -v "$PWD:/workspace:ro" debian:13 bash -ceu '

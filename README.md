@@ -39,11 +39,13 @@ sudo ./bootstrap.sh \
 
 ```bash
 sudo -i
-bootstrap_script=$(mktemp)
-curl -fsSL https://raw.githubusercontent.com/sugipamo/curlsh/v0.1.0/bootstrap.sh \
-  -o "$bootstrap_script" &&
-  bash "$bootstrap_script" --platform vm
-rm -- "$bootstrap_script"
+(
+  bootstrap_script=$(mktemp)
+  trap 'rm -- "$bootstrap_script"' EXIT
+  curl -fsSL https://raw.githubusercontent.com/sugipamo/curlsh/v0.1.0/bootstrap.sh \
+    -o "$bootstrap_script" &&
+    bash "$bootstrap_script" --platform vm
+)
 ```
 
 非対話モードでは標準入力からも実行できます。
