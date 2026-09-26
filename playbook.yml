@@ -1,0 +1,27 @@
+---
+- name: Configure this Debian machine
+  hosts: localhost
+  connection: local
+  become: true
+  gather_facts: true
+  vars_files:
+    - vars/versions.yml
+  vars:
+    ansible_python_interpreter: /usr/bin/python3
+  pre_tasks:
+    - name: Confirm supported Debian release
+      ansible.builtin.assert:
+        that:
+          - ansible_distribution == 'Debian'
+          - ansible_distribution_major_version in ['12', '13']
+          - bootstrap_platform in ['lxc', 'vm', 'baremetal']
+      tags: always
+  roles:
+    - { role: base, tags: [base] }
+    - { role: github_cli, tags: [github_cli] }
+    - { role: tailscale, tags: [tailscale] }
+    - { role: codex, tags: [codex] }
+    - { role: docker, tags: [docker] }
+    - { role: nodejs, tags: [nodejs] }
+    - { role: devtools, tags: [devtools] }
+    - { role: qemu_guest_agent, tags: [qemu_guest_agent] }

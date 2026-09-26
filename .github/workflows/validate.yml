@@ -1,0 +1,44 @@
+name: Validate bootstrap
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install validation tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-venv shellcheck
+          python3 -m venv /tmp/machine-bootstrap-lint
+          /tmp/machine-bootstrap-lint/bin/pip install ansible-core ansible-lint
+      - name: Check bootstrap arguments
+        run: ./tests/test-bootstrap.sh
+      - name: Check playbook syntax
+        run: /tmp/machine-bootstrap-lint/bin/ansible-playbook -i localhost, -c local playbook.yml -e bootstrap_platform=vm --syntax-check
+      - name: Lint Ansible
+        run: /tmp/machine-bootstrap-lint/bin/ansible-lint playbook.yml
+
+  debian-smoke:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run base and Codex roles on Debian 13
+        run: |
+          docker run --rm -v "$PWD:/workspace:ro" debian:13 bash -ceu '
+            apt-get update
+            DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ansible-core python3-apt
+            cd /workspace
+            ./bootstrap.sh --non-interactive --platform lxc --components base,codex
+            PATH=/sbin:/bin:/usr/sbin:/usr/bin codex --version
+            second_run="$(./bootstrap.sh --non-interactive --platform lxc --components base,codex)"
+            printf "%s\n" "$second_run"
+            printf "%s\n" "$second_run" | grep -Eq "changed=0[[:space:]]"
+          '

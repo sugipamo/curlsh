@@ -1,0 +1,13 @@
+---
+- name: Install development tools
+  ansible.builtin.apt:
+    name:
+      - build-essential
+      - git
+      - make
+      - pkg-config
+      - ripgrep
+      - unzip
+    state: present
+    update_cache: true
+    cache_valid_time: 3600

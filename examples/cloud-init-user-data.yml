@@ -1,0 +1,13 @@
+#cloud-config
+# Pin the bootstrap script and repository archive to the same release tag.
+# This runs as root during Cloud-Init's final stage. Keep credentials out of user-data.
+runcmd:
+  - - bash
+    - -o
+    - pipefail
+    - -c
+    - >-
+      curl -fsSL https://raw.githubusercontent.com/sugipamo/curlsh/v0.1.0/bootstrap.sh
+      | bash -s -- --ref v0.1.0
+      --non-interactive --platform vm
+      --components base,github_cli,tailscale,codex,qemu_guest_agent

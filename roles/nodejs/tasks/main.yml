@@ -1,0 +1,7 @@
+---
+- name: Install Debian Node.js and npm
+  ansible.builtin.apt:
+    name: [nodejs, npm]
+    state: present
+    update_cache: true
+    cache_valid_time: 3600

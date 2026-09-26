@@ -1,0 +1,8 @@
+.ansible/
+.cache/
+*.retry
+.env
+.env.*
+auth.json
+*.key
+*.pem
