@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# Spies never delegate to real package managers, services, network clients or tools.
+set -Eeuo pipefail
+name=${0##*/}
+case "$name" in
+  dpkg-query)
+    [[ ${*: -1} != python3-apt ]] || exit 1
+    printf 'installed 1.0\n'
+    ;;
+  timeout)
+    printf 'version probe\n' >>"$CURLSH_TEST_PROBES"
+    printf 'test-tool 1.0\n'
+    ;;
+  gum)
+    [[ $1 == choose ]]
+    [[ ${CURLSH_TEST_GUM_CANCEL:-0} != 1 ]] || exit 130
+    printf 'base | Basic tools | installed: test-tool 1.0\n'
+    ;;
+  *)
+    printf '%s %s\n' "$name" "$*" >>"$CURLSH_TEST_MUTATIONS"
+    printf 'Test boundary: blocked %s\n' "$name" >&2
+    exit 97
+    ;;
+esac

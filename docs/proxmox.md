@@ -4,16 +4,22 @@
 
 1. Debian公式cloud imageをProxmoxへ取り込み、Cloud-Initドライブ付きVMテンプレートを作成。
 2. テンプレートをCloneし、Cloud-Initで一意のhostname、SSH公開鍵、DHCPを指定。
-3. `vmbr1`と配置先OPNsenseのLANネットワークへ接続して起動。
-4. SSHで入り、`bootstrap.sh --non-interactive --platform vm`を実行。
-5. Proxmox側でもVMのQEMU guest agentを有効化。
+3. `vmbr1`と配置先OPNsenseのLANネットワークへ接続。
+4. Proxmox側でQEMU guest agentを有効化してからVMを起動。
+   既に起動済みなら完全停止して起動し直し、agent用デバイスを追加。
+5. SSHで入り、同じタグの`--dry-run`で変更仕様、`--check`で前提条件を確認後、導入を実行。
 
 ```bash
+./bootstrap.sh --dry-run --platform vm \
+  --components base,github_cli,tailscale,codex,qemu_guest_agent
+./bootstrap.sh --check --platform vm \
+  --components base,github_cli,tailscale,codex,qemu_guest_agent
 sudo ./bootstrap.sh --non-interactive --platform vm \
   --components base,github_cli,tailscale,codex,qemu_guest_agent
 ```
 
 Cloud-Initの`runcmd`で実行する場合は、タグ固定のbootstrapを取得してください。
+QEMU guest agentを選ぶ場合は、初回起動前にProxmox側で有効にしておきます。
 ネットワーク疎通が必要なので、Cloud-Initの初回実行ログを確認します。
 実行例は[Cloud-Init user-data](../examples/cloud-init-user-data.yml)を参照してください。
 Tailnet登録用キーやCodex認証情報をCloud-Init user-dataへ埋め込みません。
@@ -23,9 +29,13 @@ Tailnet登録用キーやCodex認証情報をCloud-Init user-dataへ埋め込み
 1. Proxmox標準Debianテンプレートからunprivileged CTを作成。
 2. Bridge `vmbr1`、IPv4 DHCP、配置先OPNsenseをDNSに設定。
 3. Tailscale用に`/dev/net/tun`をDevice Passthroughで追加して起動。
-4. CT内でbootstrapを実行。
+4. CT内で同じタグの`--dry-run`で変更仕様、`--check`で前提条件を確認後、導入を実行。
 
 ```bash
+./bootstrap.sh --dry-run --platform lxc \
+  --components base,github_cli,tailscale,codex
+./bootstrap.sh --check --platform lxc \
+  --components base,github_cli,tailscale,codex
 ./bootstrap.sh --non-interactive --platform lxc \
   --components base,github_cli,tailscale,codex
 ```
@@ -39,6 +49,7 @@ TUNはProxmox側の設定です。bootstrapはデバイスがない場合、変�
 codex --version
 tailscale status
 gh --version
+./bootstrap.sh --check-updates --platform lxc --components base,github_cli,tailscale,codex
 ```
 
 ヘッドレスマシンのCodexサインインは`codex login --device-auth`を利用できます。

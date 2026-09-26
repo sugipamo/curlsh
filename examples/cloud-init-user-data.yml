@@ -7,7 +7,7 @@ runcmd:
     - pipefail
     - -c
     - >-
-      curl -fsSL https://raw.githubusercontent.com/sugipamo/curlsh/v0.1.0/bootstrap.sh
-      | bash -s -- --ref v0.1.0
+      curl -fsSL https://raw.githubusercontent.com/sugipamo/curlsh/v0.2.0/bootstrap.sh
+      | bash -s -- --ref v0.2.0
       --non-interactive --platform vm
       --components base,github_cli,tailscale,codex,qemu_guest_agent

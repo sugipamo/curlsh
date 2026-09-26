@@ -1,9 +1,4 @@
 ---
-- name: Ensure Tailscale repository prerequisites
-  ansible.builtin.apt:
-    name: [ca-certificates, curl]
-    state: present
-
 - name: Create signing key directory
   ansible.builtin.file:
     path: /usr/share/keyrings

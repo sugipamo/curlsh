@@ -20,7 +20,13 @@ jobs:
           python3 -m venv /tmp/machine-bootstrap-lint
           /tmp/machine-bootstrap-lint/bin/pip install ansible-core ansible-lint
       - name: Check bootstrap arguments
-        run: ./tests/test-bootstrap.sh
+        run: |
+          ./tests/test-bootstrap.sh
+          ./tests/test-diagnostics.sh
+          ./tests/test-fetch.sh
+          ./tests/test-boundaries.sh
+          sudo ./tests/test-boundaries.sh
+          /tmp/machine-bootstrap-lint/bin/python ./tests/test-specs.py
       - name: Check playbook syntax
         run: /tmp/machine-bootstrap-lint/bin/ansible-playbook -i localhost, -c local playbook.yml -e bootstrap_platform=vm --syntax-check
       - name: Lint Ansible
@@ -28,17 +34,28 @@ jobs:
 
   debian-smoke:
     runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        debian: ['12', '13']
     steps:
       - uses: actions/checkout@v7
-      - name: Run base and Codex roles on Debian 13
+      - name: Check standalone Codex dependencies and reruns on Debian
+        env:
+          DEBIAN_VERSION: ${{ matrix.debian }}
         run: |
-          docker run --rm -v "$PWD:/workspace:ro" debian:13 bash -ceu '
+          docker run --rm -v "$PWD:/workspace:ro" "debian:$DEBIAN_VERSION" bash -ceu '
+            cd /workspace
+            ./bootstrap.sh --dry-run --platform lxc --components base,codex
             apt-get update
             DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ansible-core python3-apt
             cd /workspace
+            ./bootstrap.sh --status --platform lxc --components codex
+            ./bootstrap.sh --non-interactive --platform lxc --components codex
             ./bootstrap.sh --non-interactive --platform lxc --components base,codex
             PATH=/sbin:/bin:/usr/sbin:/usr/bin codex --version
+            ./bootstrap.sh --check --platform lxc --components base,codex
             second_run="$(./bootstrap.sh --non-interactive --platform lxc --components base,codex)"
             printf "%s\n" "$second_run"
             printf "%s\n" "$second_run" | grep -Eq "changed=0[[:space:]]"
+            ./tests/test-install-failure.sh
           '
