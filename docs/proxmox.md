@@ -1,12 +1,14 @@
-# Proxmoxへの適用
+# Using curlsh on Proxmox
 
 ## VM
 
-1. Debian公式cloud imageをProxmoxへ取り込み、Cloud-Initドライブ付きVMテンプレートを作成。
-2. テンプレートをCloneし、Cloud-Initで一意のhostname、SSH公開鍵、DHCPを指定。
-3. `vmbr1`と配置先OPNsenseのLANネットワークへ接続して起動。
-4. SSHで入り、curlshを実行。
-5. Proxmox側でもVMのQEMU guest agentを有効化。
+1. Import the official Debian cloud image into Proxmox and make a VM template
+   with a Cloud-Init drive.
+2. Clone the template. In Cloud-Init, set a unique hostname, your SSH public key
+   and DHCP.
+3. Connect it to `vmbr1` and the target OPNsense LAN, then start it.
+4. SSH in and run curlsh.
+5. Enable the QEMU guest agent for the VM on the Proxmox side too.
 
 ```bash
 curl -fsSL https://github.com/sugipamo/curlsh/releases/latest/download/install.sh |
@@ -14,33 +16,43 @@ curl -fsSL https://github.com/sugipamo/curlsh/releases/latest/download/install.s
   --components base,github_cli,tailscale,codex,qemu_guest_agent
 ```
 
-Cloud-Initの`runcmd`で実行する場合は、タグ付きURLの`install.sh`を取得してください。
-宣言ファイルは`write_files`で配置するか、`--config`でURLを渡します。
-ネットワーク疎通が必要なので、Cloud-Initの初回実行ログを確認します。
-実行例は[Cloud-Init user-data](../examples/cloud-init-user-data.yml)を参照してください。
-Tailnet登録用キーやCodex認証情報をCloud-Init user-dataへ埋め込みません。
+### With Cloud-Init
+
+Place the config with `write_files`, then run a pinned `install.sh` from
+`runcmd`. See the [Cloud-Init example](../examples/cloud-init-user-data.yml).
+You can also pass a config URL with `--config https://...`.
+
+curlsh needs network access, so check the Cloud-Init log after the first boot.
+Do not put Tailscale auth keys or Codex credentials in user-data.
 
 ## LXC
 
-1. Proxmox標準Debianテンプレートからunprivileged CTを作成。
-2. Bridge `vmbr1`、IPv4 DHCP、配置先OPNsenseをDNSに設定。
-3. Tailscale用に`/dev/net/tun`をDevice Passthroughで追加して起動。
-4. CT内でcurlshを実行。
+1. Create an unprivileged container from the standard Proxmox Debian template.
+2. Use bridge `vmbr1`, IPv4 DHCP, and the target OPNsense as DNS.
+3. For Tailscale, add `/dev/net/tun` with Device Passthrough, then start it.
+4. Run curlsh inside the container.
 
 ```bash
 curl -fsSL https://github.com/sugipamo/curlsh/releases/latest/download/install.sh |
   sudo bash -s -- --platform lxc --components base,github_cli,tailscale,codex
 ```
 
-TUNはProxmox側の設定です。curlshはデバイスがない場合、変更前に中断します。
-`tailscale up --ssh --advertise-tags=tag:agent`はCTごとに実行してください。
+TUN is configured on the Proxmox side. If the device is missing, curlsh stops
+before changing anything. Run `tailscale up --ssh --advertise-tags=tag:agent`
+in each container.
 
-## 更新
+Docker is not supported on LXC.
 
-各マシンで同じコマンドを引数なしで実行すると、`/etc/curlsh/config.yaml`の宣言に従って
-最新リリースで更新します。
+## Updating
 
-## 作成後の確認
+Run the same command with no arguments on each machine. It applies
+`/etc/curlsh/config.yaml` with the latest release.
+
+```bash
+curl -fsSL https://github.com/sugipamo/curlsh/releases/latest/download/install.sh | sudo bash
+```
+
+## Checking the result
 
 ```bash
 codex --version
@@ -48,5 +60,6 @@ tailscale status
 gh --version
 ```
 
-ヘッドレスマシンのCodexサインインは`codex login --device-auth`を利用できます。
-認証状態は`codex login status`で確認します。トークンやauth.jsonの内容は共有しないでください。
+On headless machines, sign in to Codex with `codex login --device-auth` and
+check with `codex login status`. Never share tokens or the contents of
+`auth.json`.

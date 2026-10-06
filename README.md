@@ -1,35 +1,66 @@
 # curlsh
 
-Debian 12/13のVM、Proxmox LXC、物理機へ、選んだ開発用ツールをAnsibleでセットアップします。
-OSはDebianの公式イメージを使い、このリポジトリが追加ソフトウェアを管理します。
+[日本語](README.ja.md)
 
-## 使い方
-
-curlsh自体はマシンにインストールしません。毎回`curl | bash`で最新リリースを取得して実行します。
+Set up development tools on Debian 12/13 with a single `curl | bash`.
+Works on VMs, Proxmox LXC containers and physical machines.
 
 ```bash
 curl -fsSL https://github.com/sugipamo/curlsh/releases/latest/download/install.sh | sudo bash
 ```
 
-初回は`gum`のチェックリストで部品を選びます。`gum`がない場合は、署名付きの
-Charm APTリポジトリからインストールします。選んだ内容は`/etc/curlsh/config.yaml`に
-保存してから適用します。2回目以降に同じコマンドを実行すると、保存した宣言に従って
-インストールと更新を行います。
+- **Nothing to install.** curlsh itself never stays on the machine. Every run
+  downloads the latest release, so you always use the newest version.
+- **Install and update are the same command.** Your choice is saved in
+  `/etc/curlsh/config.yaml`. Run the command again to apply updates.
+- **Safe to re-run.** Ansible roles only change what is missing or outdated.
 
-| 操作 | コマンド（`curl ... \| sudo bash -s --`に続けて指定） |
+## Quick start
+
+1. Run the command above on the target machine.
+2. Pick components from the checklist (Space to select, Enter to continue).
+3. Confirm. curlsh saves your choice and sets up the machine.
+
+To update later, run the same command again.
+
+## Commands
+
+Add options after `curl ... | sudo bash -s --`:
+
+| What you want | Options |
 |---|---|
-| 保存した宣言を適用・更新 | 引数なし |
-| 部品を選び直す | `configure` |
-| 宣言ファイルを使う | `--config ./curlsh.yaml`または`--config https://...` |
-| 部品を直接指定 | `--components base,tailscale --platform vm` |
-| 変更せずに内容だけ確認 | `--dry-run` |
-| 確認を出さない | `--non-interactive` |
+| Apply or update the saved choice | *(none)* |
+| Choose components again | `configure` |
+| Use a config file or URL | `--config ./curlsh.yaml` / `--config https://...` |
+| Choose components on the command line | `--components base,tailscale --platform vm` |
+| Show what would happen, change nothing | `--dry-run` |
+| Never prompt (for automation) | `--non-interactive` |
 
-### 宣言ファイル
+Example:
+
+```bash
+curl -fsSL https://github.com/sugipamo/curlsh/releases/latest/download/install.sh |
+  sudo bash -s -- --components base,github_cli,codex --platform vm
+```
+
+## Components
+
+| Name | What it installs | Platforms |
+|---|---|---|
+| `base` | CA certificates, curl, git, jq, SSH client | all |
+| `github_cli` | `gh` from the official APT repository | all |
+| `tailscale` | Tailscale stable, with `tailscaled` enabled | all |
+| `codex` | Pinned Codex CLI, plus `/usr/bin/codex` for minimal PATHs | all |
+| `docker` | Docker Engine and Compose from the official repository | VM, physical |
+| `nodejs` | Node.js and npm from Debian | all |
+| `devtools` | Compiler, make, ripgrep and similar | all |
+| `qemu_guest_agent` | QEMU guest agent | VM only |
+
+## Config file
 
 ```yaml
 # /etc/curlsh/config.yaml
-platform: vm          # auto|lxc|vm|baremetal。省略するとauto
+platform: vm      # auto | lxc | vm | baremetal (default: auto)
 components:
   - base
   - github_cli
@@ -37,79 +68,52 @@ components:
   - codex
 ```
 
-このファイルを編集して再実行すると、その内容がマシンに反映されます。
-`--config`で渡したファイルやhttps URLの内容は、検証後に`/etc/curlsh/config.yaml`へ
-コピーします。そのため、次回からは引数なしで同じ宣言を使えます。
-宣言から外した部品はアンインストールしません。管理対象から外れるだけです。
+- Edit this file and run curlsh again to apply the change.
+- `--config` accepts a local file or an `https://` URL. The file is checked,
+  then copied to `/etc/curlsh/config.yaml` so later runs need no arguments.
+- Removing a component does **not** uninstall it. curlsh just stops managing it.
+- `platform: auto` detects the platform. Set it yourself if detection is wrong.
+- `/var/lib/curlsh/state` records the last applied release. It is only used
+  for display and can be deleted.
 
-前回適用したリリースタグと日時は`/var/lib/curlsh/state`に記録します。これは表示用で、
-削除しても動作に影響しません。
+## Versions
 
-### 版の選び方
-
-既定では最新リリースを使います。リリースに添付した`install.sh`には、そのリリースの
-タグが埋め込まれています。ロールも同じタグのアーカイブから取得します。
-Cloud-Initなどで結果を固定したい場合は、タグ付きのURLを使います。
+By default curlsh uses the latest GitHub release. To pin a version (for
+example in Cloud-Init), download `install.sh` from a tagged release:
 
 ```bash
 curl -fsSL https://github.com/sugipamo/curlsh/releases/download/v0.2.0/install.sh |
-  sudo bash -s -- --non-interactive --config https://example.com/web-vm.yaml
+  sudo bash -s -- --non-interactive
 ```
 
-`--ref vX.Y.Z`を指定すると、そのタグのロールを使います。forkを使う場合は
-`--repo OWNER/REPOSITORY`を指定してください。
+Other options: `--ref vX.Y.Z` uses roles from another release, and
+`--repo OWNER/NAME` uses a fork.
 
-### リポジトリから実行
+## Proxmox and Cloud-Init
 
-チェックアウトした`install.sh`を実行すると、ダウンロードせずにそのチェックアウトの
-ロールを使います。
+See [docs/proxmox.md](docs/proxmox.md) and the
+[Cloud-Init example](examples/cloud-init-user-data.yml).
 
-```bash
-git clone https://github.com/sugipamo/curlsh.git
-cd curlsh
-sudo ./install.sh
-```
+## Security notes
 
-## 選択できる部品
+- `curl | bash` trusts this GitHub repository each time it runs. Pin a tag if
+  you need the same result every time.
+- Sign in to Tailscale, Codex and GitHub on each machine yourself. Auth keys,
+  API keys and `~/.codex/auth.json` are never stored in this repository.
+- Codex is installed with the
+  [official OpenAI installer](https://learn.chatgpt.com/docs/codex/cli) at the
+  version pinned in `vars/versions.yml`.
+- The checklist uses `gum`. If it is missing, curlsh adds the signed Charm APT
+  repository to install it.
 
-| 名前 | 内容 | 対象 |
-|---|---|---|
-| `base` | 証明書、curl、git、jq、SSH client | すべて |
-| `github_cli` | 公式APTリポジトリの`gh` | すべて |
-| `tailscale` | 公式stable版と`tailscaled`有効化 | すべて |
-| `codex` | 固定版Codex CLIと最小PATH向け`/usr/bin/codex` | すべて |
-| `docker` | 公式Docker EngineとCompose | VM・物理機 |
-| `nodejs` | Debian版Node.jsとnpm | すべて |
-| `devtools` | compiler、make、ripgrepなど | すべて |
-| `qemu_guest_agent` | QEMU guest agent | VMのみ |
-
-Dockerは初版ではLXC対象外です。`platform: auto`は仮想化環境を推定しますが、
-判定が違う場合は宣言ファイルの`platform`で指定できます。
-
-## Proxmoxでの流れ
-
-VMはDebian cloud imageからCloneし、Cloud-Initでユーザー、SSH公開鍵、hostname、
-DHCPを設定した後にcurlshを実行します。LXCはProxmox標準のDebianテンプレートで
-作成後に実行します。Cloud-Initの例は
-[examples/cloud-init-user-data.yml](examples/cloud-init-user-data.yml)、手順は
-[docs/proxmox.md](docs/proxmox.md)を参照してください。
-
-Tailscaleへの参加、`tag:agent`、Codexログイン、GitHubログインは各マシンで行います。
-認証キー、APIキー、`~/.codex/auth.json`はこのリポジトリに保存しません。
-
-Codexは[OpenAI公式のLinux用スタンドアロンインストーラー](https://learn.chatgpt.com/docs/codex/cli)
-を公式URLから取得し、`vars/versions.yml`の固定バージョンを指定して実行します。
-インストーラーは固定しないため、初回導入時にはOpenAIの配布元を信頼する設計です。
-
-## 開発・検証
+## Development
 
 ```bash
 ./tests/test-install.sh
 ansible-playbook -i localhost, -c local playbook.yml \
   -e bootstrap_platform=vm --syntax-check
+sudo ./install.sh     # runs the roles from this checkout
 ```
 
-Ansible roleは繰り返し実行できます。宣言した部品のroleだけが動きます。
-`vX.Y.Z`タグをpushすると、Releaseワークフローがタグを埋め込んだ`install.sh`を
-リリースに添付します。
-パッケージの更新はAPTの現在の候補版に従うため、実行時期によって結果が変わります。
+Releasing: push a `vX.Y.Z` tag. The Release workflow writes the tag into
+`install.sh` and attaches it to the GitHub release.
