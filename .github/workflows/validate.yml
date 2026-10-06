@@ -1,4 +1,4 @@
-name: Validate bootstrap
+name: Validate curlsh
 
 on:
   push:
@@ -16,11 +16,11 @@ jobs:
       - name: Install validation tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y python3-venv shellcheck
+          sudo apt-get install -y python3-venv python3-yaml shellcheck
           python3 -m venv /tmp/machine-bootstrap-lint
           /tmp/machine-bootstrap-lint/bin/pip install ansible-core ansible-lint
-      - name: Check bootstrap arguments
-        run: ./tests/test-bootstrap.sh
+      - name: Check install arguments
+        run: ./tests/test-install.sh
       - name: Check playbook syntax
         run: /tmp/machine-bootstrap-lint/bin/ansible-playbook -i localhost, -c local playbook.yml -e bootstrap_platform=vm --syntax-check
       - name: Lint Ansible
@@ -30,15 +30,18 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
-      - name: Run base and Codex roles on Debian 13
+      - name: Apply and re-apply base and Codex on Debian 13
         run: |
           docker run --rm -v "$PWD:/workspace:ro" debian:13 bash -ceu '
             apt-get update
             DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ansible-core python3-apt
             cd /workspace
-            ./bootstrap.sh --non-interactive --platform lxc --components base,codex
+            ./install.sh --non-interactive --platform lxc --components base,codex
+            grep -qx "  - codex" /etc/curlsh/config.yaml
+            grep -qx "ref=local" /var/lib/curlsh/state
             PATH=/sbin:/bin:/usr/sbin:/usr/bin codex --version
-            second_run="$(./bootstrap.sh --non-interactive --platform lxc --components base,codex)"
+            # The second run applies the saved declaration without arguments.
+            second_run="$(./install.sh --non-interactive)"
             printf "%s\n" "$second_run"
             printf "%s\n" "$second_run" | grep -Eq "changed=0[[:space:]]"
           '

@@ -1,13 +1,24 @@
 #cloud-config
-# Pin the bootstrap script and repository archive to the same release tag.
+# Declare the components, then apply them with a pinned curlsh release.
 # This runs as root during Cloud-Init's final stage. Keep credentials out of user-data.
+# Later, `curl ... | sudo bash` with no arguments updates the machine to the
+# latest release using the same declaration.
+write_files:
+  - path: /etc/curlsh/config.yaml
+    permissions: '0644'
+    content: |
+      platform: vm
+      components:
+        - base
+        - github_cli
+        - tailscale
+        - codex
+        - qemu_guest_agent
 runcmd:
   - - bash
     - -o
     - pipefail
     - -c
     - >-
-      curl -fsSL https://raw.githubusercontent.com/sugipamo/curlsh/v0.1.0/bootstrap.sh
-      | bash -s -- --ref v0.1.0
-      --non-interactive --platform vm
-      --components base,github_cli,tailscale,codex,qemu_guest_agent
+      curl -fsSL https://github.com/sugipamo/curlsh/releases/download/v0.2.0/install.sh
+      | bash -s -- --non-interactive

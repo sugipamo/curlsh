@@ -1,0 +1,27 @@
+name: Release
+
+on:
+  push:
+    tags: ['v[0-9]+.[0-9]+.[0-9]+']
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - name: Embed the release tag in install.sh
+        run: |
+          mkdir dist
+          sed "s/^embedded_ref=\$/embedded_ref=$GITHUB_REF_NAME/" install.sh >dist/install.sh
+          grep -qx "embedded_ref=$GITHUB_REF_NAME" dist/install.sh
+          bash -n dist/install.sh
+      - name: Publish install.sh as a release asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 ||
+            gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes
+          gh release upload "$GITHUB_REF_NAME" dist/install.sh --clobber
