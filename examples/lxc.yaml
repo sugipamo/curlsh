@@ -1,0 +1,8 @@
+# curlsh config for a Proxmox LXC container.
+# Tailscale needs /dev/net/tun passed through from Proxmox.
+platform: lxc
+components:
+  - base
+  - github_cli
+  - tailscale
+  - codex

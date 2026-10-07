@@ -1,0 +1,8 @@
+# Used by CI in Debian containers, where systemd services cannot run.
+platform: lxc
+components:
+  - base
+  - github_cli
+  - codex
+  - nodejs
+  - devtools

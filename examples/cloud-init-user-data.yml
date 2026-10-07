@@ -1,24 +1,12 @@
 #cloud-config
-# Declare the components, then apply them with a pinned curlsh release.
-# This runs as root during Cloud-Init's final stage. Keep credentials out of user-data.
-# Later, `curl ... | sudo bash` with no arguments updates the machine to the
-# latest release using the same declaration.
-write_files:
-  - path: /etc/curlsh/config.yaml
-    permissions: '0644'
-    content: |
-      platform: vm
-      components:
-        - base
-        - github_cli
-        - tailscale
-        - codex
-        - qemu_guest_agent
+# Apply a curlsh config with a pinned curlsh release on first boot.
+# This runs as root during Cloud-Init's final stage. Keep credentials out of
+# user-data. Later, run the same command again to upgrade the machine.
 runcmd:
   - - bash
     - -o
     - pipefail
     - -c
     - >-
-      curl -fsSL https://github.com/sugipamo/curlsh/releases/download/v0.2.1/install.sh
-      | bash -s -- --non-interactive
+      curl -fsSL https://github.com/sugipamo/curlsh/releases/download/v0.3.0/install.sh
+      | bash -s -- --config https://example.com/vm.yaml

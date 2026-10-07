@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Release tag (vX.Y.Z)
+        description: New release tag (vX.Y.Z)
         required: true
 
 permissions:
@@ -25,6 +25,12 @@ jobs:
         run: |
           tag=${INPUT_TAG:-$GITHUB_REF_NAME}
           [[ $tag =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "Invalid tag: $tag" >&2; exit 1; }
+          # A manual run builds from the branch, so it must not touch an existing tag.
+          if [[ $GITHUB_EVENT_NAME == workflow_dispatch ]] &&
+            git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null; then
+            echo "Tag $tag already exists; push a new tag instead" >&2
+            exit 1
+          fi
           echo "TAG=$tag" >>"$GITHUB_ENV"
       - name: Embed the release tag in install.sh
         run: |

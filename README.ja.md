@@ -2,45 +2,52 @@
 
 [English](README.md)
 
-Debian 12/13 に開発用ツールを `curl | bash` 一発でセットアップします。
+Debian 12/13 に、設定ファイル1つと `curl | bash` で開発用ツールをセットアップします。
 VM、Proxmox の LXC、物理マシンで使えます。
 
 ```bash
-curl -fsSL https://github.com/sugipamo/curlsh/releases/latest/download/install.sh | sudo bash
+curl -fsSL https://github.com/sugipamo/curlsh/releases/latest/download/install.sh |
+  sudo bash -s -- --config https://example.com/my-machine.yaml
 ```
 
-- **インストール不要**: curlsh 自体はマシンに残りません。毎回最新リリースを取得するので、
-  常に最新版を使えます。
-- **インストールと更新が同じコマンド**: 選んだ内容は `/etc/curlsh/config.yaml` に保存されます。
-  もう一度実行すると更新されます。
-- **何度実行しても安全**: Ansible の role が、足りないものや古いものだけを変更します。
+- **何も残さない**: curlsh 本体、設定ファイル、実行記録のどれもマシンに残しません。
+  必要なのは `bash` と `curl` だけです。
+- **設定ファイルが正**: 設定はリポジトリや gist などで管理し、毎回渡します。
+- **毎回マシンを確認する**: 足りないものはインストールし、入っているものは最新版に
+  上げます。更新したいときはもう一度実行するだけです。
 
-## はじめかた
+## 設定ファイル
 
-1. 対象マシンで上のコマンドを実行します。
-2. チェックリストから部品を選びます（スペースで選択、Enter で決定）。
-3. 確認すると、選択内容を保存してセットアップします。
+```yaml
+platform: vm      # auto | lxc | vm | baremetal（省略時は auto）
+components:
+  - base
+  - github_cli
+  - tailscale
+  - codex
+```
 
-あとで更新するときは、同じコマンドをもう一度実行するだけです。
+`components: [base, codex]` の形でも書けます。使えるキーは `platform` と `components`
+だけで、それ以外はエラーになります。[examples](examples/) も参照してください。
 
-## コマンド
+`--config` にはファイルか `https://` の URL を指定します。
 
-`curl ... | sudo bash -s --` の後ろにオプションを付けます。
+## 事前に確認する
 
-| やりたいこと | オプション |
-|---|---|
-| 保存した内容を適用・更新 | *（なし）* |
-| 部品を選び直す | `configure` |
-| 設定ファイルや URL を使う | `--config ./curlsh.yaml` / `--config https://...` |
-| コマンドラインで部品を指定 | `--components base,tailscale --platform vm` |
-| 何も変更せず内容だけ確認 | `--dry-run` |
-| 確認を出さない（自動化向け） | `--non-interactive` |
-
-例:
+`--check` を付けると、何も変更せずに変更予定だけを表示します。
 
 ```bash
 curl -fsSL https://github.com/sugipamo/curlsh/releases/latest/download/install.sh |
-  sudo bash -s -- --components base,github_cli,codex --platform vm
+  bash -s -- --check --config https://example.com/my-machine.yaml
+```
+
+```
+Packages
+  ok             git 1:2.47.3-0+deb13u1
+  will upgrade   gh 2.101.0 -> 2.102.0
+Codex
+  will install   codex 0.160.1
+Check: 2 change(s) needed
 ```
 
 ## 部品
@@ -50,42 +57,28 @@ curl -fsSL https://github.com/sugipamo/curlsh/releases/latest/download/install.s
 | `base` | 証明書、curl、git、jq、SSH クライアント | すべて |
 | `github_cli` | 公式 APT リポジトリの `gh` | すべて |
 | `tailscale` | Tailscale stable 版と `tailscaled` の有効化 | すべて |
-| `codex` | 固定版 Codex CLI と、最小 PATH 用の `/usr/bin/codex` | すべて |
+| `codex` | 最新の Codex CLI と、最小 PATH 用の `/usr/bin/codex` | すべて |
 | `docker` | 公式リポジトリの Docker Engine と Compose | VM・物理マシン |
 | `nodejs` | Debian の Node.js と npm | すべて |
 | `devtools` | コンパイラ、make、ripgrep など | すべて |
 | `qemu_guest_agent` | QEMU guest agent | VM のみ |
 
-## 設定ファイル
+外部リポジトリを使う部品（`github_cli`、`tailscale`、`docker`）は、APT で更新できるよう
+署名鍵と取得元の設定を追加します。
 
-```yaml
-# /etc/curlsh/config.yaml
-platform: vm      # auto | lxc | vm | baremetal（省略時は auto）
-components:
-  - base
-  - github_cli
-  - tailscale
-  - codex
-```
-
-- このファイルを編集して再実行すると、変更が反映されます。
-- `--config` にはファイルか `https://` の URL を指定できます。内容を検証してから
-  `/etc/curlsh/config.yaml` にコピーするので、次回からは引数なしで使えます。
-- 一覧から外した部品はアンインストール**しません**。管理対象から外れるだけです。
-- `platform: auto` は自動判定です。判定が違う場合は自分で指定してください。
-- `/var/lib/curlsh/state` には前回適用したリリースを記録します。表示用なので消しても問題ありません。
+設定から外した部品はアンインストール**しません**。管理対象から外れるだけです。
 
 ## バージョン
 
-既定では最新の GitHub リリースを使います。Cloud-Init などで版を固定したい場合は、
-タグ付きリリースの `install.sh` を取得します。
+既定では最新の curlsh リリースを使います。Cloud-Init などで固定したい場合は、
+タグ付きの URL を使います。
 
 ```bash
-curl -fsSL https://github.com/sugipamo/curlsh/releases/download/v0.2.1/install.sh |
-  sudo bash -s -- --non-interactive
+curl -fsSL https://github.com/sugipamo/curlsh/releases/download/v0.3.0/install.sh |
+  sudo bash -s -- --config https://example.com/my-machine.yaml
 ```
 
-ほかに、`--ref vX.Y.Z` で別リリースの role を、`--repo OWNER/NAME` でフォークを使えます。
+固定されるのは curlsh の動作だけです。パッケージと Codex は常に最新版に上がります。
 
 ## Proxmox と Cloud-Init
 
@@ -94,23 +87,21 @@ curl -fsSL https://github.com/sugipamo/curlsh/releases/download/v0.2.1/install.s
 
 ## セキュリティ上の注意
 
-- `curl | bash` は実行のたびにこの GitHub リポジトリを信頼します。毎回同じ結果が必要なら
-  タグで固定してください。
-- Tailscale、Codex、GitHub へのログインは各マシンで行ってください。認証キー、API キー、
-  `~/.codex/auth.json` はこのリポジトリに保存しません。
-- Codex は [OpenAI 公式インストーラー](https://learn.chatgpt.com/docs/codex/cli)で、
-  `vars/versions.yml` に固定したバージョンを入れます。
-- チェックリストには `gum` を使います。入っていない場合は、署名付きの Charm APT
-  リポジトリを追加してインストールします。
+- `curl | bash` は、実行のたびにこの GitHub リポジトリと設定ファイルの URL を信頼します。
+  curlsh 自体を固定したい場合はタグを指定してください。
+- Tailscale、Codex、GitHub へのログインは各マシンで行ってください。認証キーや
+  `~/.codex/auth.json` を設定ファイルに入れないでください。
+- Codex は [OpenAI 公式インストーラー](https://learn.chatgpt.com/docs/codex/cli)で入れます。
 
 ## 開発
 
 ```bash
-./tests/test-install.sh
-ansible-playbook -i localhost, -c local playbook.yml \
-  -e bootstrap_platform=vm --syntax-check
-sudo ./install.sh     # このチェックアウトの role で実行
+./tests/test-install.sh                                  # shellcheck が必要
+sudo ./install.sh --config tests/smoke.yaml              # Debian のテスト用マシンで
 ```
 
-リリース: `vX.Y.Z` タグを push すると、Release ワークフローがタグを書き込んだ
-`install.sh` を GitHub リリースに添付します。
+CI は最小構成の Debian 12 と 13 に `tests/smoke.yaml` を2回適用し、2回目に変更がないことを
+確認します。
+
+リリース: `vX.Y.Z` タグを push するか、Actions 画面から Release ワークフローを新しい
+タグ名で実行します。タグを書き込んだ `install.sh` が GitHub リリースに添付されます。

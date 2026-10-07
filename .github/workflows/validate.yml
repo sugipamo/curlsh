@@ -13,36 +13,33 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
-      - name: Install validation tools
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y python3-venv python3-yaml shellcheck
-          python3 -m venv /tmp/machine-bootstrap-lint
-          /tmp/machine-bootstrap-lint/bin/pip install ansible-core ansible-lint
-      - name: Check install arguments
+      - name: Install shellcheck
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
+      - name: Check arguments and config parsing
         run: ./tests/test-install.sh
-      - name: Check playbook syntax
-        run: /tmp/machine-bootstrap-lint/bin/ansible-playbook -i localhost, -c local playbook.yml -e bootstrap_platform=vm --syntax-check
-      - name: Lint Ansible
-        run: /tmp/machine-bootstrap-lint/bin/ansible-lint playbook.yml
 
   debian-smoke:
     runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        debian: ['12', '13']
     steps:
       - uses: actions/checkout@v7
-      - name: Apply and re-apply roles on minimal Debian 13
+      - name: Apply twice on minimal Debian ${{ matrix.debian }}
         run: |
-          docker run --rm -v "$PWD:/workspace:ro" debian:13 bash -ceu '
+          docker run --rm -v "$PWD:/workspace:ro" "debian:${{ matrix.debian }}" bash -ceu '
+            # A real machine already has curl, since it ran curl | bash.
             apt-get update
-            DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ansible-core python3-apt
-            cd /workspace
-            ./install.sh --non-interactive --platform lxc --components base,github_cli,codex
-            grep -qx "  - codex" /etc/curlsh/config.yaml
-            grep -qx "ref=local" /var/lib/curlsh/state
-            PATH=/sbin:/bin:/usr/sbin:/usr/bin codex --version
+            DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends curl ca-certificates
+            config=/workspace/tests/smoke.yaml
+            /workspace/install.sh --config "$config"
+            PATH=/usr/bin:/bin codex --version
             gh --version
-            # The second run applies the saved declaration without arguments.
-            second_run="$(./install.sh --non-interactive)"
+            second_run="$(/workspace/install.sh --config "$config")"
             printf "%s\n" "$second_run"
-            printf "%s\n" "$second_run" | grep -Eq "changed=0[[:space:]]"
+            printf "%s\n" "$second_run" | grep -qx "Done: 0 change(s)"
+            /workspace/install.sh --check --config "$config" | grep -qx "Check: 0 change(s) needed"
+            # curlsh keeps nothing of its own on the machine.
+            test ! -e /etc/curlsh && test ! -e /var/lib/curlsh
+            if command -v ansible-playbook || command -v gum; then exit 1; fi
           '

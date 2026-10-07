@@ -1,0 +1,8 @@
+# curlsh config for a Proxmox VM.
+platform: vm
+components:
+  - base
+  - github_cli
+  - tailscale
+  - codex
+  - qemu_guest_agent

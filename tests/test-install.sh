@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Checks arguments and config parsing. Nothing here changes the machine.
 set -Eeuo pipefail
 
 repo_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
@@ -15,66 +16,51 @@ expect_fail() {
   fi
 }
 
-output=$("$install_sh" --dry-run --platform vm --components base,codex,qemu_guest_agent,codex)
-[[ $output == *'Config: command line -> /etc/curlsh/config.yaml'* ]]
-[[ $output == *'Platform: vm'* ]]
-[[ $output == *'Components: base,codex,qemu_guest_agent'* ]]
-[[ $output == *'Version: local'* ]]
+check_config() {
+  printf '%b\n' "$1" >"$work/config.yaml"
+  "$install_sh" --check --config "$work/config.yaml"
+}
 
-expect_fail "$install_sh" --dry-run --platform lxc --components docker
-expect_fail "$install_sh" --dry-run --platform vm --components invalid
-expect_fail "$install_sh" --dry-run --platform lxc --components qemu_guest_agent
-expect_fail "$install_sh" --dry-run --platform vm --components base,
-expect_fail "$install_sh" --dry-run --platform vm --components base,,codex
-expect_fail "$install_sh" --dry-run --components base --repo invalid
-expect_fail "$install_sh" --dry-run --components base --ref main
-expect_fail "$install_sh" --dry-run --platform bogus --components base
-expect_fail "$install_sh" --dry-run --config "$work/missing.yaml"
-expect_fail "$install_sh" --dry-run --config http://example.com/curlsh.yaml
-expect_fail "$install_sh" --dry-run --config "$work/missing.yaml" --components base
-expect_fail "$install_sh" configure --dry-run --components base
-# --platform belongs in the config file unless components are chosen here.
-expect_fail "$install_sh" --dry-run --platform vm --config "$work/missing.yaml"
-
-cat >"$work/good.yaml" <<'EOF'
-# Proxmox VM
-platform: vm
-components: [base, tailscale, qemu_guest_agent, base]
-EOF
-output=$("$install_sh" --dry-run --config "$work/good.yaml")
-[[ $output == *"Config: $work/good.yaml -> /etc/curlsh/config.yaml"* ]]
-[[ $output == *'Platform: vm'* ]]
-[[ $output == *'Components: base,tailscale,qemu_guest_agent'* ]]
-
-# Without a platform the config auto-detects, which refuses containers.
-case "$(systemd-detect-virt 2>/dev/null || true)" in
-  docker|podman) ;;
-  *)
-    printf 'components:\n  - base\n  - codex\n' >"$work/default-platform.yaml"
-    output=$("$install_sh" --dry-run --config "$work/default-platform.yaml")
-    [[ $output == *'Components: base,codex'* ]]
-    ;;
-esac
+expect_fail "$install_sh"
+expect_fail "$install_sh" --check
+expect_fail "$install_sh" --config
+expect_fail "$install_sh" --components base
+expect_fail "$install_sh" --check --config "$work/missing.yaml"
+expect_fail "$install_sh" --check --config http://example.com/curlsh.yaml
 
 bad_configs=(
+  ''
+  'platform: vm'
+  'components:'
   'components: []'
-  'components: base\nplatform: vm'
-  'components: [base, invalid]\nplatform: vm'
-  'components: [base]\nplatform: lxc\nextra: 1'
-  'components: [docker]\nplatform: lxc'
-  'components: ["base\\ncodex"]'
-  'components: [base]\nplatform: [vm]'
-  '- base'
-  'components: [base'
+  'components: base'
+  'platform: vm\ncomponents: [base, invalid]'
+  'platform: vm\ncomponents: [base]\nextra: 1'
+  'platform: lxc\ncomponents: [docker]'
+  'platform: lxc\ncomponents: [qemu_guest_agent]'
+  'platform: bogus\ncomponents: [base]'
+  'platform: vm\nplatform: lxc\ncomponents: [base]'
+  'platform: vm\ncomponents: [base]\ncomponents: [codex]'
+  'platform: vm\n- base'
+  'platform: vm\ncomponents:\n  - "base"'
+  'platform: vm\ncomponents: [base'
 )
 for config in "${bad_configs[@]}"; do
-  printf '%b\n' "$config" >"$work/bad.yaml"
-  expect_fail "$install_sh" --dry-run --config "$work/bad.yaml"
+  if check_config "$config" >/dev/null 2>&1; then
+    echo "Unexpectedly accepted config: $config" >&2
+    exit 1
+  fi
 done
 
-# Piped into bash, the script must not mistake the working directory for a checkout.
-output=$(cd "$repo_dir" && bash -s -- --dry-run --ref v0.1.0 --platform vm --components base <"$install_sh")
-[[ $output == *'Version: v0.1.0'* ]]
+# Block list, comments, CRLF and duplicates.
+output=$(check_config '---\n# Proxmox VM\nplatform: vm   # fixed\ncomponents:\n  - base\r\n  - nodejs\n  - base\n')
+[[ $output == *'Platform: vm'* ]]
+[[ $output == *'Components: base nodejs'* ]]
+[[ $output == *'Packages'* ]]
+[[ $output == *'Check: '*' change(s) needed'* ]]
 
-echo 'install argument checks passed'
+# Flow list.
+output=$(check_config 'platform: lxc\ncomponents: [ base , devtools ]')
+[[ $output == *'Components: base devtools'* ]]
 
+echo 'install checks passed'

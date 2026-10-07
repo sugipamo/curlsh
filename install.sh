@@ -1,46 +1,40 @@
 #!/usr/bin/env bash
-# curlsh: choose, install and update development tools on Debian.
+# curlsh: set up development tools on Debian from a config file.
 #
-#   curl -fsSL https://github.com/sugipamo/curlsh/releases/latest/download/install.sh | sudo bash
+#   curl -fsSL https://github.com/sugipamo/curlsh/releases/latest/download/install.sh |
+#     sudo bash -s -- --config https://example.com/curlsh.yaml
 #
-# Nothing of curlsh itself stays installed. Each run fetches the release and
-# applies the declaration in /etc/curlsh/config.yaml. Everything runs from
-# main at the last line, so a truncated download never executes.
+# curlsh leaves nothing of itself on the machine: no copy of this script, no
+# saved config, no state. Each run reads the config, checks the machine, and
+# installs or upgrades what the config lists. Everything runs from main at the
+# last line, so a truncated download never executes.
 set -Eeuo pipefail
 
-# The release workflow writes its tag here. Empty means "the latest release".
+# The release workflow writes its tag here.
 embedded_ref=
-
-config_path=/etc/curlsh/config.yaml
-state_path=/var/lib/curlsh/state
 
 usage() {
   cat <<'EOF'
-Usage: install.sh [apply|configure] [options]
+Usage: install.sh --config PATH|URL [--check]
 
-  apply      Apply /etc/curlsh/config.yaml (default). Without a config,
-             choose components interactively first.
-  configure  Choose components interactively, save them, and apply.
+  --config PATH|URL  Config file, or an https:// URL to one (required)
+  --check            Report what would change, change nothing
+  -h, --help         Show this help
 
-Options:
-  --config PATH|URL   Use this config (https URL or file); it is saved to
-                      /etc/curlsh/config.yaml for later runs
-  --components LIST   Comma-separated components; saved to the config
-  --platform NAME     auto|lxc|vm|baremetal (with --components or configure)
-  --ref vX.Y.Z        Use roles from this release instead of the latest
-  --repo OWNER/NAME   Fetch releases from a fork
-  --non-interactive   Never prompt
-  --dry-run           Show what would be applied, change nothing
-  -h, --help          Show this help
+Config (YAML subset):
+  platform: auto        # auto | lxc | vm | baremetal (optional)
+  components:
+    - base
+    - codex
 
-Components: base,github_cli,tailscale,codex,docker,nodejs,devtools,qemu_guest_agent
+Components: base github_cli tailscale codex docker nodejs devtools qemu_guest_agent
 EOF
 }
 
 die() {
   local code=$1
   shift
-  printf '%s\n' "$*" >&2
+  printf 'curlsh: %s\n' "$*" >&2
   exit "$code"
 }
 
@@ -51,34 +45,134 @@ valid_component() {
   esac
 }
 
-valid_platform() {
-  case "$1" in auto|lxc|vm|baremetal) return 0 ;; *) return 1 ;; esac
+component_packages() {
+  case "$1" in
+    base) echo ca-certificates curl git jq openssh-client ;;
+    github_cli) echo gh ;;
+    tailscale) echo tailscale ;;
+    docker) echo docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin ;;
+    nodejs) echo nodejs npm ;;
+    devtools) echo build-essential git make pkg-config ripgrep unzip ;;
+    qemu_guest_agent) echo qemu-guest-agent ;;
+  esac
 }
 
-valid_ref() {
-  [[ $1 =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+component_service() {
+  case "$1" in
+    tailscale) echo tailscaled ;;
+    docker) echo docker ;;
+    qemu_guest_agent) echo qemu-guest-agent ;;
+  esac
 }
 
-have_tty() {
-  (exec </dev/tty) 2>/dev/null
+# Sets repo_key_url, repo_key, repo_list and repo_line for components that
+# come from a vendor APT repository.
+component_repo() {
+  case "$1" in
+    github_cli)
+      repo_key_url=https://cli.github.com/packages/githubcli-archive-keyring.gpg
+      repo_key=/etc/apt/keyrings/githubcli-archive-keyring.gpg
+      repo_list=/etc/apt/sources.list.d/github-cli.list
+      repo_line="deb [arch=$deb_arch signed-by=$repo_key] https://cli.github.com/packages stable main"
+      ;;
+    tailscale)
+      repo_key_url=https://pkgs.tailscale.com/stable/debian/$codename.noarmor.gpg
+      repo_key=/usr/share/keyrings/tailscale-archive-keyring.gpg
+      repo_list=/etc/apt/sources.list.d/tailscale.list
+      repo_line="deb [signed-by=$repo_key] https://pkgs.tailscale.com/stable/debian $codename main"
+      ;;
+    docker)
+      repo_key_url=https://download.docker.com/linux/debian/gpg
+      repo_key=/etc/apt/keyrings/docker.asc
+      repo_list=/etc/apt/sources.list.d/docker.list
+      repo_line="deb [arch=$deb_arch signed-by=$repo_key] https://download.docker.com/linux/debian $codename stable"
+      ;;
+    *) return 1 ;;
+  esac
 }
 
-require_root() {
-  [[ $EUID -eq 0 ]] || die 1 'Run as root (curl ... | sudo bash)'
+# Prints one result line. In --check mode, actions read as plans.
+report() {
+  local action=$1 subject=$2 word
+  case "$action" in
+    ok|skip) word=$action ;;
+    *)
+      changes=$((changes + 1))
+      if ((check)); then
+        word="will $action"
+      else
+        case "$action" in
+          install) word=installed ;; upgrade) word=upgraded ;; update) word=updated ;;
+          create) word=created ;; enable) word=enabled ;; start) word=started ;;
+          *) word=$action ;;
+        esac
+      fi
+      ;;
+  esac
+  printf '  %-14s %s\n' "$word" "$subject"
 }
 
-require_debian() {
-  [[ -r /etc/os-release ]] || die 1 'Cannot identify the OS'
-  local ID VERSION_ID
-  # shellcheck source=/dev/null
-  source /etc/os-release
-  [[ $ID == debian && ( $VERSION_ID == 12 || $VERSION_ID == 13 ) ]] ||
-    die 1 'Debian 12 or 13 is required'
+fetch() {
+  curl -fsSL --proto '=https' --retry 3 "$1" -o "$2" || die 1 "cannot download $1"
 }
 
-apt_install() {
-  apt-get update
-  DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "$@"
+# Copies a config file or https URL to the temporary directory.
+stage_config() {
+  local source=$1 staged=$temp_dir/config.yaml
+  case "$source" in
+    https://*) curl -fsSL --proto '=https' --max-filesize 65536 --retry 3 "$source" -o "$staged" ||
+      die 1 "cannot download config: $source" ;;
+    *://*) die 2 'config URLs must use https://' ;;
+    *) [[ -f $source && -r $source ]] || die 1 "cannot read config file: $source"
+      cp -- "$source" "$staged" ;;
+  esac
+  config_file=$staged
+}
+
+# Reads the supported YAML subset into platform and requested.
+parse_config() {
+  local line n=0 in_list=0 seen_platform=0 seen_components=0 item items
+  local re_item='^[[:space:]]+-[[:space:]]+([a-z_]+)$'
+  local re_platform='^platform:[[:space:]]*([a-z]+)$'
+  local re_block='^components:$'
+  local re_flow='^components:[[:space:]]*\[(.*)\]$'
+  platform=auto
+  requested=()
+  while IFS= read -r line || [[ -n $line ]]; do
+    n=$((n + 1))
+    line=${line%$'\r'}
+    line=${line%%#*}
+    line=${line%"${line##*[![:space:]]}"}
+    [[ -n $line && $line != --- ]] || continue
+    if [[ $line =~ $re_item ]]; then
+      ((in_list)) || die 2 "config line $n: list item outside components"
+      requested+=("${BASH_REMATCH[1]}")
+      continue
+    fi
+    in_list=0
+    if [[ $line =~ $re_platform ]]; then
+      ((!seen_platform)) || die 2 "config line $n: platform is set twice"
+      seen_platform=1
+      platform=${BASH_REMATCH[1]}
+    elif [[ $line =~ $re_block ]]; then
+      ((!seen_components)) || die 2 "config line $n: components is set twice"
+      seen_components=1
+      in_list=1
+    elif [[ $line =~ $re_flow ]]; then
+      ((!seen_components)) || die 2 "config line $n: components is set twice"
+      seen_components=1
+      IFS=, read -r -a items <<<"${BASH_REMATCH[1]}"
+      for item in "${items[@]}"; do
+        item=${item//[[:space:]]/}
+        [[ $item =~ ^[a-z_]+$ ]] || die 2 "config line $n: invalid component '$item'"
+        requested+=("$item")
+      done
+    else
+      die 2 "config line $n: unsupported line: $line"
+    fi
+  done <"$1"
+  ((seen_components)) || die 2 'config has no components'
+  ((${#requested[@]} > 0)) || die 2 'config components is empty'
 }
 
 detect_platform() {
@@ -87,303 +181,210 @@ detect_platform() {
   case "$virt" in
     lxc|openvz|systemd-nspawn) echo lxc ;;
     kvm|qemu|vmware|microsoft|oracle|xen) echo vm ;;
-    docker|podman) die 2 'Container runtime detected; specify a supported platform explicitly' ;;
+    docker|podman) die 2 'container runtime detected; set platform in the config' ;;
     *) echo baremetal ;;
   esac
 }
 
-ensure_yaml() {
-  python3 -c 'import yaml' 2>/dev/null && return 0
-  [[ $EUID -eq 0 ]] || die 1 'Reading the config needs python3-yaml (run as root to install it)'
-  require_debian
-  apt_install python3-yaml
+# Prints the installed version of a package, or nothing.
+installed_version() {
+  local status
+  status=$(dpkg-query -W -f='${db:Status-Abbrev}|${Version}' "$1" 2>/dev/null || true)
+  [[ $status == ii* ]] && printf '%s\n' "${status#*|}"
+  return 0
 }
 
-# Prints the platform and the comma-joined components of a config file.
-read_config() {
-  python3 -I - "$1" <<'EOF'
-import re
-import sys
-
-import yaml
-
-try:
-    with open(sys.argv[1], encoding='utf-8') as stream:
-        data = yaml.safe_load(stream)
-except (OSError, UnicodeDecodeError, yaml.YAMLError) as error:
-    sys.exit(f'Cannot read config: {error}')
-if not isinstance(data, dict):
-    sys.exit('Config must be a mapping with "components"')
-unknown = sorted(str(key) for key in data if key not in ('components', 'platform'))
-if unknown:
-    sys.exit('Unknown config keys: ' + ', '.join(unknown))
-components = data.get('components')
-if not isinstance(components, list) or not components:
-    sys.exit('Config "components" must be a non-empty list')
-for name in components:
-    if not isinstance(name, str) or not re.fullmatch(r'[a-z_]+', name):
-        sys.exit(f'Invalid component in config: {name!r}')
-platform = data.get('platform', 'auto')
-if not isinstance(platform, str) or not re.fullmatch(r'[a-z]+', platform):
-    sys.exit(f'Invalid platform in config: {platform!r}')
-print(platform)
-print(','.join(components))
-EOF
+candidate_version() {
+  LC_ALL=C apt-cache policy "$1" 2>/dev/null | awk '/Candidate:/ { print $2; exit }'
 }
 
-# Copies a config file or https URL to a private staging path.
-stage_config() {
-  local source=$1 staged
-  staged=$temp_dir/config.yaml
-  case "$source" in
-    https://*)
-      curl -fsSL --proto '=https' --max-filesize 65536 --retry 3 "$source" -o "$staged" ||
-        die 1 "Cannot download config: $source"
-      ;;
-    *://*) die 2 'Config URLs must use https://' ;;
-    *)
-      [[ -f $source && -r $source ]] || die 1 "Cannot read config file: $source"
-      cp -- "$source" "$staged"
-      ;;
-  esac
-  printf '%s\n' "$staged"
-}
-
-load_config() {
-  local parsed
-  ensure_yaml
-  parsed=$(read_config "$1") || return 1
-  config_platform=${parsed%%$'\n'*}
-  config_components=${parsed#*$'\n'}
-}
-
-render_config() {
-  local item
-  printf '# Managed by curlsh. Edit this file and run curlsh again to apply it.\n'
-  printf 'platform: %s\n' "$1"
-  printf 'components:\n'
-  for item in "${@:2}"; do
-    printf '  - %s\n' "$item"
-  done
-}
-
-ensure_gum() {
-  command -v gum >/dev/null 2>&1 && return 0
-  apt_install ca-certificates curl gnupg
-  install -d -m 0755 /etc/apt/keyrings
-  curl -fsSL https://repo.charm.sh/apt/gpg.key | gpg --dearmor --yes -o /etc/apt/keyrings/charm.gpg
-  chmod 0644 /etc/apt/keyrings/charm.gpg
-  printf '%s\n' 'deb [signed-by=/etc/apt/keyrings/charm.gpg] https://repo.charm.sh/apt/ * *' \
-    >/etc/apt/sources.list.d/charm.list
-  apt_install gum
-}
-
-# Prints the chosen components, starting from the comma-joined preselection.
-choose_components() {
-  local platform=$1 preselected=$2 selection item
-  local choices=(base github_cli tailscale codex nodejs devtools) initial=()
-  if [[ $platform == vm ]]; then
-    choices+=(docker qemu_guest_agent)
-  elif [[ $platform == baremetal ]]; then
-    choices+=(docker)
+sync_file() {
+  local source=$1 dest=$2
+  if [[ -f $dest ]] && cmp -s "$source" "$dest"; then
+    report ok "$dest"
+    return
   fi
-  for item in "${choices[@]}"; do
-    [[ ,$preselected, == *,"$item",* ]] && initial+=("$item")
-  done
-  printf 'Detected platform: %s\n' "$platform" >&2
-  selection=$(
-    printf '%s\n' "${choices[@]}" |
-      gum choose --no-limit --selected "$(IFS=,; echo "${initial[*]}")" \
-        --header 'Install components (Space to select, Enter to continue)' 2>/dev/tty
-  ) || die 1 'Cancelled'
-  [[ -n $selection ]] || die 1 'No components selected'
-  printf '%s\n' "$selection" | paste -sd, -
+  if [[ -e $dest ]]; then report update "$dest"; else report create "$dest"; fi
+  ((check)) || install -D -m 0644 "$source" "$dest"
 }
 
-resolve_latest_ref() {
-  local url tag
-  url=$(curl -fsSLI -o /dev/null -w '%{url_effective}' "https://github.com/$1/releases/latest") ||
-    die 1 "Cannot look up the latest release of $1"
-  tag=${url##*/}
-  valid_ref "$tag" || die 1 "No release found for $1"
-  printf '%s\n' "$tag"
+sync_repositories() {
+  local name n=0
+  for name in "${selected[@]}"; do
+    component_repo "$name" || continue
+    ((n++)) || printf 'Repositories\n'
+    fetch "$repo_key_url" "$temp_dir/$name.key"
+    sync_file "$temp_dir/$name.key" "$repo_key"
+    printf '%s\n' "$repo_line" >"$temp_dir/$name.list"
+    sync_file "$temp_dir/$name.list" "$repo_list"
+  done
+}
+
+sync_packages() {
+  local -a packages=()
+  local -A before=() seen=()
+  local name pkg after log=$temp_dir/apt.log
+  for name in "${selected[@]}"; do
+    for pkg in $(component_packages "$name"); do
+      [[ -n ${seen[$pkg]+yes} ]] || { packages+=("$pkg"); seen[$pkg]=1; }
+    done
+  done
+  ((${#packages[@]})) || return 0
+  printf 'Packages\n'
+  for pkg in "${packages[@]}"; do
+    before[$pkg]=$(installed_version "$pkg")
+  done
+
+  if ((check)); then
+    for pkg in "${packages[@]}"; do
+      after=$(candidate_version "$pkg")
+      [[ $after != "(none)" ]] || after=''
+      if [[ -z ${before[$pkg]} ]]; then
+        report install "$pkg${after:+ $after}"
+      elif [[ -n $after && $after != "${before[$pkg]}" ]]; then
+        report upgrade "$pkg ${before[$pkg]} -> $after"
+      else
+        report ok "$pkg ${before[$pkg]}"
+      fi
+    done
+    return 0
+  fi
+
+  # apt-get install also upgrades packages that are already installed.
+  if ! { apt-get -q update && DEBIAN_FRONTEND=noninteractive apt-get -q install -y "${packages[@]}"; } >"$log" 2>&1; then
+    cat "$log" >&2
+    die 1 'apt-get failed'
+  fi
+  for pkg in "${packages[@]}"; do
+    after=$(installed_version "$pkg")
+    if [[ -z ${before[$pkg]} ]]; then
+      report install "$pkg $after"
+    elif [[ $after != "${before[$pkg]}" ]]; then
+      report upgrade "$pkg ${before[$pkg]} -> $after"
+    else
+      report ok "$pkg $after"
+    fi
+  done
+}
+
+sync_services() {
+  local name service enabled active n=0
+  for name in "${selected[@]}"; do
+    service=$(component_service "$name")
+    [[ -n $service ]] || continue
+    ((n++)) || printf 'Services\n'
+    if [[ ! -d /run/systemd/system ]]; then
+      report skip "$service (systemd is not running)"
+      continue
+    fi
+    enabled=$(systemctl is-enabled "$service" 2>/dev/null || true)
+    active=$(systemctl is-active "$service" 2>/dev/null || true)
+    if [[ $enabled == enabled && $active == active ]]; then
+      report ok "$service"
+      continue
+    fi
+    [[ $enabled == enabled ]] || report enable "$service"
+    [[ $active == active ]] || report start "$service"
+    ((check)) || systemctl enable --now "$service"
+  done
+}
+
+sync_codex() {
+  local latest current='' link
+  printf 'Codex\n'
+  latest=$(curl -fsSL --retry 3 https://releases.openai.com/codex/channels/latest |
+    grep -o '"tag_name": *"rust-v[^"]*"' | head -n 1 | sed 's/.*rust-v//; s/"$//') || true
+  [[ $latest =~ ^[0-9]+\.[0-9]+\.[0-9]+ ]] || die 1 'cannot find the latest Codex release'
+  if [[ -x /usr/local/bin/codex ]]; then
+    current=$(/usr/local/bin/codex --version 2>/dev/null | awk '{ print $2 }') || true
+  fi
+  if [[ $current == "$latest" ]]; then
+    report ok "codex $current"
+  else
+    if [[ -n $current ]]; then report upgrade "codex $current -> $latest"; else report install "codex $latest"; fi
+    if ((!check)); then
+      fetch https://releases.openai.com/codex/install.sh "$temp_dir/codex-install.sh"
+      CODEX_RELEASE=$latest CODEX_NON_INTERACTIVE=1 CODEX_INSTALL_DIR=/usr/local/bin \
+        CODEX_HOME=/usr/local/lib/codex sh "$temp_dir/codex-install.sh" >"$temp_dir/codex.log" 2>&1 ||
+        { cat "$temp_dir/codex.log" >&2; die 1 'Codex installer failed'; }
+    fi
+  fi
+  # A link in /usr/bin keeps codex on minimal PATHs such as non-login SSH.
+  link=$(readlink /usr/bin/codex 2>/dev/null || true)
+  if [[ $link == /usr/local/bin/codex ]]; then
+    report ok /usr/bin/codex
+  else
+    report create '/usr/bin/codex -> /usr/local/bin/codex'
+    ((check)) || ln -s /usr/local/bin/codex /usr/bin/codex
+  fi
 }
 
 main() {
-  local action=apply platform_flag='' components_flag='' config_source=''
-  local non_interactive=0 dry_run=0 repo=sugipamo/curlsh ref=''
-  temp_dir=$(mktemp -d)
+  local config_source='' item
+  check=0
   while (($#)); do
     case "$1" in
-      apply|configure) action=$1; shift ;;
-      --platform|--components|--config|--repo|--ref)
-        (($# >= 2)) || die 2 "Missing value for $1"
-        case "$1" in
-          --platform) platform_flag=$2 ;;
-          --components) components_flag=$2 ;;
-          --config) config_source=$2 ;;
-          --repo) repo=$2 ;;
-          --ref) ref=$2 ;;
-        esac
+      --config)
+        (($# >= 2)) || die 2 'missing value for --config'
+        config_source=$2
         shift 2 ;;
-      --non-interactive) non_interactive=1; shift ;;
-      --dry-run) dry_run=1; shift ;;
-      --help|-h) usage; exit 0 ;;
-      *) printf 'Unknown option: %s\n' "$1" >&2; usage >&2; exit 2 ;;
+      --check) check=1; shift ;;
+      -h|--help) usage; exit 0 ;;
+      *) printf 'curlsh: unknown option: %s\n' "$1" >&2; usage >&2; exit 2 ;;
     esac
   done
+  [[ -n $config_source ]] || { usage >&2; die 2 '--config is required'; }
 
-  [[ $repo =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || die 2 'Invalid --repo (expected OWNER/NAME)'
-  [[ -z $ref ]] || valid_ref "$ref" || die 2 'Use a fixed vX.Y.Z tag for --ref'
-  [[ -z $platform_flag ]] || valid_platform "$platform_flag" || die 2 'Invalid platform'
-  [[ -z $config_source || -z $components_flag ]] || die 2 'Use either --config or --components'
-  if [[ $action == configure && -n $config_source$components_flag ]]; then
-    die 2 'configure chooses components interactively; drop --config and --components'
-  fi
-  if [[ -n $platform_flag && $action != configure && -z $components_flag ]]; then
-    die 2 '--platform works with --components or configure; otherwise set it in the config'
-  fi
+  temp_dir=$(mktemp -d)
+  stage_config "$config_source"
+  parse_config "$config_file"
 
-  # Where the declaration comes from: a given config, flags, the saved
-  # config, or an interactive choice.
-  local mode staged='' config_platform=auto config_components=''
-  if [[ -n $config_source ]]; then
-    mode=given
-    staged=$(stage_config "$config_source")
-    load_config "$staged" || exit 1
-  elif [[ -n $components_flag ]]; then
-    mode=flags
-    config_platform=${platform_flag:-auto}
-    config_components=$components_flag
-  elif [[ $action == apply && -f $config_path ]]; then
-    mode=saved
-    load_config "$config_path" || exit 1
-  else
-    mode=interactive
-    ((!dry_run)) || die 2 '--dry-run needs --config, --components or a saved config'
-    ((!non_interactive)) || die 2 "No $config_path; pass --config or --components"
-    have_tty || die 2 "No $config_path and no terminal; pass --config or --components"
-    require_root
-    require_debian
-    # Preselect the saved choice; a broken config just starts empty.
-    if [[ -f $config_path ]] && ! load_config "$config_path"; then
-      config_platform=auto
-      config_components=
-    fi
-    config_platform=${platform_flag:-$config_platform}
-  fi
-
-  valid_platform "$config_platform" || die 2 "Invalid platform: $config_platform"
-  local platform=$config_platform
+  case "$platform" in auto|lxc|vm|baremetal) ;; *) die 2 "invalid platform: $platform" ;; esac
   [[ $platform != auto ]] || platform=$(detect_platform)
 
-  if [[ $mode == interactive ]]; then
-    ensure_gum
-    config_components=$(choose_components "$platform" "$config_components")
-  fi
-
-  if [[ $config_components == ,* || $config_components == *, || $config_components == *,,* ]]; then
-    die 2 'Empty component in the component list'
-  fi
-  local requested=() selected=() item
+  selected=()
   local -A seen=()
-  IFS=, read -r -a requested <<<"$config_components"
-  ((${#requested[@]} > 0)) || die 2 'No components selected'
   for item in "${requested[@]}"; do
-    valid_component "$item" || die 2 "Unknown component: $item"
-    if [[ $item == qemu_guest_agent && $platform != vm ]]; then
-      die 2 'qemu_guest_agent requires platform vm'
-    fi
-    if [[ $item == docker && $platform == lxc ]]; then
-      die 2 'Docker is not supported by curlsh on LXC'
-    fi
-    if [[ -z ${seen[$item]+yes} ]]; then
-      selected+=("$item")
-      seen[$item]=1
-    fi
+    valid_component "$item" || die 2 "unknown component: $item"
+    [[ $item != qemu_guest_agent || $platform == vm ]] || die 2 'qemu_guest_agent needs platform vm'
+    [[ $item != docker || $platform != lxc ]] || die 2 'docker is not supported on lxc'
+    [[ -n ${seen[$item]+yes} ]] || { selected+=("$item"); seen[$item]=1; }
   done
-  local components
-  components=$(IFS=,; echo "${selected[*]}")
 
-  # Roles come from this checkout, or from the release archive.
-  local script_dir='' project_dir=''
-  if [[ -n $script_path ]]; then
-    script_dir=$(cd -- "$(dirname -- "$script_path")" && pwd)
+  printf 'curlsh %s\nConfig: %s\nPlatform: %s\nComponents: %s\n' \
+    "${embedded_ref:-dev}" "$config_source" "$platform" "${selected[*]}"
+
+  local ID='' VERSION_ID='' VERSION_CODENAME=''
+  # shellcheck source=/dev/null
+  [[ -r /etc/os-release ]] && source /etc/os-release
+  if [[ $ID != debian || ( $VERSION_ID != 12 && $VERSION_ID != 13 ) ]]; then
+    ((check)) || die 1 'Debian 12 or 13 is required'
+    printf 'Warning: not Debian 12 or 13; results only show what curlsh would check.\n'
   fi
-  if [[ -z $ref && -n $script_dir && -f $script_dir/playbook.yml && -d $script_dir/roles ]]; then
-    project_dir=$script_dir
-    ref=local
+  ((check)) || [[ $EUID -eq 0 ]] || die 1 'run as root (curl ... | sudo bash -s -- --config ...)'
+  codename=$VERSION_CODENAME
+  deb_arch=$(dpkg --print-architecture 2>/dev/null || echo amd64)
+  if [[ $platform == lxc && -n ${seen[tailscale]+yes} && ! -e /dev/net/tun ]]; then
+    die 1 'tailscale on LXC needs /dev/net/tun passed through from Proxmox (see docs/proxmox.md)'
+  fi
+  if [[ -n ${seen[codex]+yes} && -e /usr/bin/codex ]] &&
+    [[ $(readlink /usr/bin/codex 2>/dev/null || true) != /usr/local/bin/codex ]]; then
+    die 1 '/usr/bin/codex exists and is not managed by curlsh'
+  fi
+
+  changes=0
+  sync_repositories
+  sync_packages
+  sync_services
+  [[ -z ${seen[codex]+yes} ]] || sync_codex
+
+  if ((check)); then
+    printf 'Check: %d change(s) needed\n' "$changes"
   else
-    command -v curl >/dev/null || die 1 'curl is required'
-    ref=${ref:-$embedded_ref}
-    [[ -n $ref ]] || ref=$(resolve_latest_ref "$repo")
+    printf 'Done: %d change(s)\n' "$changes"
   fi
-
-  local previous=''
-  if [[ -r $state_path ]]; then
-    previous=$(sed -n 's/^ref=\([A-Za-z0-9.]*\)$/\1/p' "$state_path")
-  fi
-  case "$mode" in
-    given) printf 'Config: %s -> %s\n' "$config_source" "$config_path" ;;
-    flags) printf 'Config: command line -> %s\n' "$config_path" ;;
-    interactive) printf 'Config: selection -> %s\n' "$config_path" ;;
-    saved) printf 'Config: %s\n' "$config_path" ;;
-  esac
-  printf 'Platform: %s\nComponents: %s\nVersion: %s%s\n' \
-    "$platform" "$components" "${previous:+$previous -> }" "$ref"
-  ((!dry_run)) || exit 0
-
-  require_root
-  require_debian
-  if [[ $platform == lxc && ,$components, == *,tailscale,* && ! -e /dev/net/tun ]]; then
-    die 1 'Tailscale on LXC requires /dev/net/tun passed through from Proxmox (see docs/proxmox.md).'
-  fi
-  if ((!non_interactive)) && have_tty; then
-    ensure_gum
-    gum confirm 'Apply this configuration?' </dev/tty || die 1 'Cancelled'
-  fi
-
-  # Save the declaration first, so a failed run can simply be repeated.
-  if [[ $mode != saved ]]; then
-    local new_config
-    new_config=$temp_dir/config.new
-    if [[ $mode == given ]]; then
-      cp -- "$staged" "$new_config"
-    else
-      render_config "$config_platform" "${selected[@]}" >"$new_config"
-    fi
-    install -d -m 0755 "${config_path%/*}"
-    install -m 0644 "$new_config" "$config_path"
-  fi
-
-  if [[ -z $project_dir ]]; then
-    project_dir=$temp_dir/source
-    curl -fsSL --retry 3 "https://github.com/$repo/archive/refs/tags/$ref.tar.gz" \
-      -o "$temp_dir/source.tar.gz"
-    mkdir "$project_dir"
-    tar -xzf "$temp_dir/source.tar.gz" --strip-components=1 -C "$project_dir"
-  fi
-
-  if ! command -v ansible-playbook >/dev/null 2>&1; then
-    apt_install ansible-core
-  fi
-  if ! dpkg-query -W -f='${Status}' python3-apt 2>/dev/null | grep -qx 'install ok installed'; then
-    apt_install python3-apt
-  fi
-
-  (
-    cd "$project_dir"
-    ansible-playbook -i localhost, -c local playbook.yml \
-      --tags "$components" --extra-vars "bootstrap_platform=$platform" </dev/null
-  )
-
-  install -d -m 0755 "${state_path%/*}"
-  printf 'ref=%s\napplied_at=%s\n' "$ref" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >"$state_path"
-  echo 'curlsh complete. Register Tailscale and sign in to Codex on this machine if selected.'
 }
 
-# Empty when piped into bash; read here because inside a function it is "main".
-script_path=${BASH_SOURCE[0]-}
 temp_dir=
 trap '[[ -z $temp_dir ]] || rm -rf -- "$temp_dir"' EXIT
 main "$@"
