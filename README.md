@@ -82,7 +82,7 @@ By default curlsh uses the latest GitHub release. To pin a version (for
 example in Cloud-Init), download `install.sh` from a tagged release:
 
 ```bash
-curl -fsSL https://github.com/sugipamo/curlsh/releases/download/v0.2.0/install.sh |
+curl -fsSL https://github.com/sugipamo/curlsh/releases/download/v0.2.1/install.sh |
   sudo bash -s -- --non-interactive
 ```
 
