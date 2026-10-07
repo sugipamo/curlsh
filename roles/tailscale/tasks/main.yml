@@ -17,18 +17,19 @@
     mode: '0644'
 
 - name: Configure Tailscale stable repository
-  ansible.builtin.apt_repository:
-    repo: >-
-      deb [signed-by=/usr/share/keyrings/tailscale-archive-keyring.gpg]
-      https://pkgs.tailscale.com/stable/debian {{ ansible_distribution_release }} main
-    filename: tailscale
-    state: present
-    update_cache: true
+  # apt_repository needs gpg, which minimal Debian lacks.
+  ansible.builtin.copy:
+    dest: /etc/apt/sources.list.d/tailscale.list
+    content: |
+      deb [signed-by=/usr/share/keyrings/tailscale-archive-keyring.gpg] https://pkgs.tailscale.com/stable/debian {{ ansible_distribution_release }} main
+    mode: '0644'
+  register: tailscale_repository
 
 - name: Install Tailscale
   ansible.builtin.apt:
     name: tailscale
     state: present
+    update_cache: "{{ tailscale_repository is changed }}"
 
 - name: Enable and start tailscaled
   ansible.builtin.systemd_service:

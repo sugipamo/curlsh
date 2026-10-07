@@ -22,14 +22,15 @@
     mode: '0644'
 
 - name: Configure Docker stable repository
-  ansible.builtin.apt_repository:
-    repo: >-
-      deb [arch={{ ansible_architecture | replace('x86_64', 'amd64') | replace('aarch64', 'arm64') }}
-      signed-by=/etc/apt/keyrings/docker.asc]
-      https://download.docker.com/linux/debian {{ ansible_distribution_release }} stable
-    filename: docker
-    state: present
-    update_cache: true
+  # apt_repository needs gpg, which minimal Debian lacks.
+  ansible.builtin.copy:
+    dest: /etc/apt/sources.list.d/docker.list
+    content: |
+      deb [arch={{ deb_arch }} signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian {{ ansible_distribution_release }} stable
+    mode: '0644'
+  vars:
+    deb_arch: "{{ ansible_architecture | replace('x86_64', 'amd64') | replace('aarch64', 'arm64') }}"
+  register: docker_repository
 
 - name: Install Docker Engine and Compose
   ansible.builtin.apt:
@@ -40,6 +41,7 @@
       - docker-buildx-plugin
       - docker-compose-plugin
     state: present
+    update_cache: "{{ docker_repository is changed }}"
 
 - name: Enable and start Docker
   ansible.builtin.systemd_service:

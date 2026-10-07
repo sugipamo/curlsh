@@ -30,16 +30,17 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
-      - name: Apply and re-apply base and Codex on Debian 13
+      - name: Apply and re-apply roles on minimal Debian 13
         run: |
           docker run --rm -v "$PWD:/workspace:ro" debian:13 bash -ceu '
             apt-get update
             DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ansible-core python3-apt
             cd /workspace
-            ./install.sh --non-interactive --platform lxc --components base,codex
+            ./install.sh --non-interactive --platform lxc --components base,github_cli,codex
             grep -qx "  - codex" /etc/curlsh/config.yaml
             grep -qx "ref=local" /var/lib/curlsh/state
             PATH=/sbin:/bin:/usr/sbin:/usr/bin codex --version
+            gh --version
             # The second run applies the saved declaration without arguments.
             second_run="$(./install.sh --non-interactive)"
             printf "%s\n" "$second_run"
