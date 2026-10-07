@@ -1,8 +1,15 @@
 name: Release
 
+# Push a vX.Y.Z tag, or run this workflow by hand with a new tag name to
+# create that tag on the selected branch.
 on:
   push:
     tags: ['v[0-9]+.[0-9]+.[0-9]+']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag (vX.Y.Z)
+        required: true
 
 permissions:
   contents: write
@@ -12,16 +19,24 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
+      - name: Pick the release tag
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          tag=${INPUT_TAG:-$GITHUB_REF_NAME}
+          [[ $tag =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "Invalid tag: $tag" >&2; exit 1; }
+          echo "TAG=$tag" >>"$GITHUB_ENV"
       - name: Embed the release tag in install.sh
         run: |
           mkdir dist
-          sed "s/^embedded_ref=\$/embedded_ref=$GITHUB_REF_NAME/" install.sh >dist/install.sh
-          grep -qx "embedded_ref=$GITHUB_REF_NAME" dist/install.sh
+          sed "s/^embedded_ref=\$/embedded_ref=$TAG/" install.sh >dist/install.sh
+          grep -qx "embedded_ref=$TAG" dist/install.sh
           bash -n dist/install.sh
       - name: Publish install.sh as a release asset
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 ||
-            gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes
-          gh release upload "$GITHUB_REF_NAME" dist/install.sh --clobber
+          # On a tag push the tag exists already and --target is ignored.
+          gh release view "$TAG" >/dev/null 2>&1 ||
+            gh release create "$TAG" --target "$GITHUB_SHA" --generate-notes
+          gh release upload "$TAG" dist/install.sh --clobber
